@@ -1,10 +1,11 @@
 """Present the existing repair service and its disposable workspace results."""
 
-import json
 import os
 from pathlib import Path
 import tempfile
 from zipfile import ZIP_DEFLATED, ZipFile
+
+from adapters.trace_format import format_event
 
 os.environ["GRADIO_ANALYTICS_ENABLED"] = "False"
 
@@ -28,13 +29,19 @@ def _repair(service, case: str) -> tuple[str, str, str, str | None]:
         return "Unknown case", "", "", None
     try:
         result = service.repair(f"evals/{case}")
-        trace = "\n".join(json.dumps(event, ensure_ascii=False) for event in result.trace)
+        trace = "\n".join(format_event(event) for event in result.trace)
         workspace = Path(result.workspace).resolve(strict=True)
         changed = "\n\n".join(
             f"{relative}\n{_workspace_file(workspace, relative).read_text(encoding='utf-8')}"
             for relative in result.changed_files
         ) or "No changed files."
         tests = result.last_test_result
+        status = (
+            f"{'PASSED' if tests.passed else 'FAILED'} (exit {tests.returncode})"
+            if tests is not None else "NOT RUN"
+        )
+        changed_paths = "\n".join(f"    {path}" for path in result.changed_files) or "    (none)"
+        trace += f"\n\nChanged files:\n{changed_paths}\nFinal sandboxed test status: {status}"
         output = (
             f"Passed: {tests.passed}\nReturn code: {tests.returncode}\n\n{tests.output}"
             if tests is not None else "No sandboxed test result."

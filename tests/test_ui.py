@@ -21,7 +21,7 @@ def test_launched_ui_returns_results_and_download(tmp_path):
     def repair(selected):
         calls.append(selected)
         return RepairResult(
-            True, [{"event": "repair_finished", "passed": True}],
+            True, [{"event": "repair_finished", "passed": True, "reason": "Verified"}],
             ["calculator.py"], str(workspace), TestResult(True, "2 passed", 0),
         )
 
@@ -37,7 +37,9 @@ def test_launched_ui_returns_results_and_download(tmp_path):
 
     result = asyncio.run(invoke())["data"]
     assert calls == ["evals/arithmetic"]
-    assert "repair_finished" in result[0]
+    assert "FINISHED SUCCESS\n    Verified" in result[0]
+    assert "Changed files:\n    calculator.py" in result[0]
+    assert "Final sandboxed test status: PASSED (exit 0)" in result[0]
     assert "calculator.py\nfixed source" in result[1]
     assert "2 passed" in result[2]
     archive = Path(result[3]["path"])
