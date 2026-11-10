@@ -7,9 +7,11 @@ from pathlib import Path
 from typing import Any
 
 from adapters.models.scripted import ScriptedClient
+from adapters.models.ollama import OllamaClient
 from adapters.sandbox import runner
 from adapters.sandbox.repair_tools import RepairTools
 from core.models import TestResult
+from core.ports import ChatClient
 from core.repair_agent import RepairAgent
 from core.repair_service import RepairService
 
@@ -62,9 +64,9 @@ def scripted_replies(case: str, workspace: Path) -> list[str]:
 
 
 class _VisibleClient:
-    """Forward public scripted responses when each decision occurs."""
+    """Forward model replies while leaving action validation to RepairAgent."""
 
-    def __init__(self, client: ScriptedClient, emit: Callable[[dict[str, Any]], None]) -> None:
+    def __init__(self, client: ChatClient, emit: Callable[[dict[str, Any]], None]) -> None:
         self.client = client
         self.emit = emit
         self.decision = 0
@@ -73,7 +75,7 @@ class _VisibleClient:
         reply = self.client.chat(messages)
         self.decision += 1
         self.emit({"event": "model_response", "decision": self.decision,
-                   "action": json.loads(reply)})
+                   "reply": reply})
         return reply
 
 
@@ -116,13 +118,19 @@ class _VisibleTools:
 def create_service(
     provider: str = "scripted",
     on_event: Callable[[dict[str, Any]], None] | None = None,
+    model: str | None = None,
+    temperature: float = 0.0,
 ) -> RepairService:
     """Wire a fresh client and workspace tools for each repair attempt."""
-    if provider != "scripted":
+    if provider not in {"scripted", "ollama"}:
         raise ValueError(f"Unsupported provider: {provider}")
 
     def create_agent(case: str, workspace: Path) -> RepairAgent:
-        client = ScriptedClient(scripted_replies(case, workspace))
+        client = (
+            OllamaClient(model=model, temperature=temperature)
+            if provider == "ollama"
+            else ScriptedClient(scripted_replies(case, workspace))
+        )
         tools = RepairTools(workspace)
         if on_event:
             return RepairAgent(_VisibleClient(client, on_event), _VisibleTools(tools, on_event))

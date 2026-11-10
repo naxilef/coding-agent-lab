@@ -64,6 +64,10 @@ def test_runner_launches_only_restricted_docker(tmp_path, monkeypatch):
     assert command[:3] == ["docker", "run", "--rm"]
     assert command[command.index("--network") + 1] == "none"
     assert command.count("--mount") == 1
+    assert "--read-only" in command
+    assert command[command.index("--tmpfs") + 1] == (
+        "/tmp:rw,noexec,nosuid,size=64m,mode=1777"
+    )
     assert command[command.index("--mount") + 1] == (
         f"type=bind,source={tmp_path.resolve()},target=/workspace,readonly"
     )

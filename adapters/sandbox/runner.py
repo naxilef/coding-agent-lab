@@ -45,6 +45,7 @@ def run_tests(workspace: str | Path) -> TestResult:
     command = [
         "docker", "run", "--rm", "--name", name,
         "--network", "none", "--read-only",
+        "--tmpfs", "/tmp:rw,noexec,nosuid,size=64m,mode=1777",
         "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
         "--pids-limit", "128", "--memory", "256m", "--cpus", "1",
         "--mount", f"type=bind,source={workspace},target=/workspace,readonly",
