@@ -1,6 +1,8 @@
 """Validate model decisions and control an eight-decision repair attempt."""
 
 from dataclasses import asdict
+from collections.abc import Callable
+from copy import deepcopy
 import json
 from typing import Any
 
@@ -57,9 +59,18 @@ def _parse_action(raw: str) -> ModelAction:
 class RepairAgent:
     """Coordinate chat and permitted tools without executing project code."""
 
-    def __init__(self, client: ChatClient, tools: RepairToolsPort) -> None:
+    def __init__(
+        self, client: ChatClient, tools: RepairToolsPort,
+        on_event: Callable[[dict[str, Any]], None] | None = None,
+    ) -> None:
         self.client = client
         self.tools = tools
+        self.on_event = on_event
+
+    def _emit(self, event: dict[str, Any]) -> None:
+        """Forward a snapshot without exposing the stored trace to mutation."""
+        if self.on_event is not None:
+            self.on_event(deepcopy(event))
 
     def run(
         self, case_name: str, relative_files: list[str], workspace: str = ""
@@ -77,13 +88,16 @@ class RepairAgent:
         read_observed = False
         failure_observed = False
         edited = False
+        self._emit(trace[0])
 
         def finish(passed: bool, reason: str) -> RepairResult:
             trace.append({"event": "repair_finished", "passed": passed, "reason": reason})
+            self._emit(trace[-1])
             return RepairResult(passed, trace, changed_files, str(workspace), latest)
 
         def observe(tool: str, observation: dict[str, Any]) -> None:
             trace.append({"event": "tool_result", "tool": tool, **observation})
+            self._emit(trace[-1])
             messages.append({
                 "role": "user", "content": tool_result_message(tool, observation)
             })
@@ -100,8 +114,10 @@ class RepairAgent:
                 action = _parse_action(raw)
             except (ValueError, TypeError, RecursionError) as exc:
                 response["error"] = f"Invalid reply: {exc}"
+                self._emit(response)
                 return finish(False, f"Invalid reply: {exc}")
             response["action"] = asdict(action)
+            self._emit(response)
             messages.append({"role": "assistant", "content": raw})
 
             if action.tool == "edit_file" and not (read_observed and failure_observed):

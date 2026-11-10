@@ -1,7 +1,6 @@
 """Assemble core repair rules with concrete scripted and sandbox adapters."""
 
 from collections.abc import Callable
-from dataclasses import asdict
 import json
 from pathlib import Path
 from typing import Any
@@ -10,8 +9,6 @@ from adapters.models.scripted import ScriptedClient
 from adapters.models.ollama import OllamaClient
 from adapters.sandbox import runner
 from adapters.sandbox.repair_tools import RepairTools
-from core.models import TestResult
-from core.ports import ChatClient
 from core.repair_agent import RepairAgent
 from core.repair_service import RepairService
 
@@ -63,58 +60,6 @@ def scripted_replies(case: str, workspace: Path) -> list[str]:
     return [json.dumps(action) for action in actions]
 
 
-class _VisibleClient:
-    """Forward model replies while leaving action validation to RepairAgent."""
-
-    def __init__(self, client: ChatClient, emit: Callable[[dict[str, Any]], None]) -> None:
-        self.client = client
-        self.emit = emit
-        self.decision = 0
-
-    def chat(self, messages: list[dict[str, str]]) -> str:
-        reply = self.client.chat(messages)
-        self.decision += 1
-        self.emit({"event": "model_response", "decision": self.decision,
-                   "reply": reply})
-        return reply
-
-
-class _VisibleTools:
-    """Forward tool observations immediately while retaining safe tool boundaries."""
-
-    def __init__(self, tools: RepairTools, emit: Callable[[dict[str, Any]], None]) -> None:
-        self.tools = tools
-        self.emit = emit
-
-    def _call(self, tool: str, *arguments: str) -> Any:
-        try:
-            result = getattr(self.tools, tool)(*arguments)
-        except Exception as exc:
-            self.emit({"event": "tool_result", "tool": tool,
-                       "error": "tool_error", "message": str(exc)})
-            raise
-        if tool == "run_tests":
-            observation = asdict(result)
-        elif tool == "read_file":
-            observation = {"content": result}
-        else:
-            observation = {"edited": arguments[0]}
-        self.emit({"event": "tool_result", "tool": tool, **observation})
-        return result
-
-    def read_file(self, path: str) -> str:
-        """Read through the safe workspace tools."""
-        return self._call("read_file", path)
-
-    def edit_file(self, path: str, content: str) -> None:
-        """Edit through the safe workspace tools."""
-        self._call("edit_file", path, content)
-
-    def run_tests(self) -> TestResult:
-        """Execute tests through the Docker-backed tools."""
-        return self._call("run_tests")
-
-
 def create_service(
     provider: str = "scripted",
     on_event: Callable[[dict[str, Any]], None] | None = None,
@@ -132,8 +77,6 @@ def create_service(
             else ScriptedClient(scripted_replies(case, workspace))
         )
         tools = RepairTools(workspace)
-        if on_event:
-            return RepairAgent(_VisibleClient(client, on_event), _VisibleTools(tools, on_event))
-        return RepairAgent(client, tools)
+        return RepairAgent(client, tools, on_event=on_event)
 
-    return RepairService(runner.EVALS_ROOT, runner.create_workspace, create_agent, on_event)
+    return RepairService(runner.EVALS_ROOT, runner.create_workspace, create_agent)
